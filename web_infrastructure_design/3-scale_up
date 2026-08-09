@@ -1,0 +1,88 @@
+# 3. Scale Up
+
+## Diagram
+
++-------------------------------------------------------------------------------------------------------------------+
+|                                                                                                                   |
+|                                                [ User's Browser ]                                                 |
+|                                                        |                                                          |
+|                                                        | Encrypted HTTPS Request (Port 443)                        |
+|                                                        v                                                          |
+|                                         +------------------------------+                                          |
+|                                         |          DNS Server          |                                          |
+|                                         |  www.foobar.com -> VIP       |                                          |
+|                                         +--------------+---------------+                                          |
+|                                                        |                                                          |
+|                                                        v                                                          |
+|                                         +------------------------------+                                          |
+|                                         |  Virtual IP (VIP)            |                                          |
+|                                         +--------------+---------------+                                          |
+|                                                        |                                                          |
+|                             +--------------------------+--------------------------+                               |
+|                             | Active                                              | Passive (Failover)            |
+|                             v                                                     v                               |
+|              +------------------------------+                      +------------------------------+               |
+|              | Load Balancer 1 (HAProxy)    | <--- Keepalived ---> | Load Balancer 2 (HAProxy)    |               |
+|              | SSL Termination              | (VRRP / Sync State)  | SSL Termination              |               |
+|              +--------------+---------------+                      +--------------+---------------+               |
+|                             |                                                     |                               |
+|                             +--------------------------+--------------------------+                               |
+|                                                        |                                                          |
+|                                     +------------------+------------------+                                       |
+|                                     | Round-Robin                         | Round-Robin                           |
+|                                     v                                     v                                       |
+|                      +------------------------------+      +------------------------------+                       |
+|                      | Web Server 1 (Nginx)         |      | Web Server 2 (Nginx)         |                       |
+|                      +--------------+---------------+      +--------------+---------------+                       |
+|                                     |                                     |                                       |
+|                                     +------------------+------------------+                                       |
+|                                                        |                                                          |
+|                                     +------------------+------------------+                                       |
+|                                     v                                     v                                       |
+|                      +------------------------------+      +------------------------------+                       |
+|                      | App Server 1                 |      | App Server 2                 |                       |
+|                      | (Codebase Exec engine)       |      | (Codebase Exec engine)       |                       |
+|                      +--------------+---------------+      +--------------+---------------+                       |
+|                                     |                                     |                                       |
+|                                     +------------------+------------------+                                       |
+|                                                        |                                                          |
+|                                                        | Read/Write splitting                                     |
+|                                       +----------------+----------------+                                         |
+|                                       | Writes                          | Reads                                   |
+|                                       v                                 v                                         |
+|                      +------------------------------+      +------------------------------+                       |
+|                      | Primary DB (MySQL)           |      | Replica DB (MySQL)           |                       |
+|                      +--------------+---------------+      +--------------+---------------+                       |
+|                                     |                                     ^                                       |
+|                                     +------------ Replicating ------------+                                       |
+|                                                                                                                   |
++-------------------------------------------------------------------------------------------------------------------+
+
+## Description & Workflow
+
+1. The user sends an HTTPS request to `www.foobar.com` on port 443.
+2. The DNS maps `www.foobar.com` to a **Virtual IP (VIP)** shared between two load balancers managed by Keepalived using VRRP.
+3. Traffic is received by the **Active Load Balancer (HAProxy 1)**, which terminates SSL/TLS and decrypts the traffic.
+4. HAProxy balances requests across **Web Server 1** and **Web Server 2** (running Nginx) via Round-Robin.
+5. The **Web Servers** process static content directly and forward dynamic application requests to **Application Server 1** or **Application Server 2**.
+6. The **Application Servers** execute business logic from the codebase.
+7. Database queries are split based on type:
+   * **Write operations** (INSERT, UPDATE, DELETE) are directed to the **Primary MySQL Database**.
+   * **Read operations** (SELECT) are distributed across the **Replica MySQL Database**.
+8. The Primary Database asynchronously replicates data updates to the Replica Database.
+9. Responses flow back through the application tier, web server tier, and load balancer back to the client browser.
+
+## Why Additional Elements Were Added
+
+* **1 Additional Load Balancer (HAProxy Cluster):** Added to eliminate the single point of failure (SPOF) at the load balancer layer. Using VRRP (e.g., via Keepalived), Load Balancer 1 operates as Active and Load Balancer 2 operates as Passive. If LB 1 fails, LB 2 instantly claims the Virtual IP and continues serving traffic without downtime.
+* **1 Additional Server:** Added to facilitate full tier separation and independent horizontal scaling.
+* **Decoupled Component Infrastructure (Component Splitting):**
+  * **Web Servers (Nginx):** Dedicated strictly to serving static files, SSL/TLS, client connection handling, and reverse proxying.
+  * **Application Servers:** Dedicated exclusively to running CPU/memory-intensive dynamic code and business logic.
+  * **Database Servers (MySQL Primary/Replica):** Dedicated exclusively to database storage, query processing, indexing, and persistent I/O without competing for CPU/RAM against application processes.
+
+## Infrastructure Specifics
+
+### Application Server vs. Web Server
+* **Web Server (Nginx):** Serves static files (HTML, CSS, JS, images), manages HTTP protocol features, terminates SSL, handles rate limiting, and forwards dynamic requests to the application tier.
+* **Application Server:** Runs the actual server-side program codebase (e.g., PHP-FPM, Node.js, Python, Gunicorn, C# ASP.NET Core runtime). It executes complex program logic, processes dynamic computations, and generates raw responses to hand back to the web server.
