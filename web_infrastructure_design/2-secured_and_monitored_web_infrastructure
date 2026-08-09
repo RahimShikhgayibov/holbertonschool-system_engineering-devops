@@ -1,0 +1,96 @@
+# 2. Secured and Monitored Web Infrastructure
+
+## Diagram
+
++-----------------------------------------------------------------------------------+
+|                                                                                   |
+|                                [ User's Browser ]                                 |
+|                                        |                                          |
+|                                        | Encrypted HTTPS Request (Port 443)        |
+|                                        v                                          |
+|                         +------------------------------+                          |
+|                         |          DNS Server          |                          |
+|                         |  www.foobar.com -> 8.8.8.8   |                          |
+|                         +--------------+---------------+                          |
+|                                        |                                          |
+|                                        v                                          |
+|                         +------------------------------+                          |
+|                         |  Firewall 1 (Load Balancer)  |                          |
+|                         +--------------+---------------+                          |
+|                                        |                                          |
+|                                        v                                          |
+|                         +------------------------------+                          |
+|                         |  Load Balancer (HAProxy)     |                          |
+|                         |   SSL Termination (443->80)  |                          |
+|                         |    Monitoring Agent 1        |                          |
+|                         +--------------+---------------+                          |
+|                                        |                                          |
+|                   +--------------------+--------------------+                     |
+|                   | Round-Robin                             | Round-Robin         |
+|                   v                                         v                     |
+|    +------------------------------+          +------------------------------+     |
+|    | Firewall 2                   |          | Firewall 3                   |     |
+|    +--------------+---------------+          +--------------+---------------+     |
+|                   |                                         |                     |
+|                   v                                         v                     |
+|    +------------------------------+          +------------------------------+     |
+|    | Server 1 (Web / App / DB)    |          | Server 2 (Web / App / DB)    |     |
+|    | IP: 10.0.0.1                 |          | IP: 10.0.0.2                 |     |
+|    |                              |          |                              |     |
+|    | +--------------------------+ |          | +--------------------------+ |     |
+|    | | Web Server (Nginx)       | |          | | Web Server (Nginx)       | |     |
+|    | +------------+-------------+ |          | +------------+-------------+ |     |
+|    |              |               |          |              |               |     |
+|    |              v               |          |              v               |     |
+|    | +--------------------------+ |          | +--------------------------+ |     |
+|    | | Application Server       | |          | | Application Server       | |     |
+|    | +----+-----------------+---+ |          | +----+-----------------+---+ |     |
+|    |      |                 |     |          |      |                 |     |     |
+|    |      v                 v     |          |      v                 v     |     |
+|    | +----------+   +-----------+ |          | +----------+   +-----------+ |     |
+|    | | App Code |   | Primary DB| |          | | App Code |   | Replica DB| |     |
+|    | +----------+   | (MySQL)   | |          | +----------+   | (MySQL)   | |     |
+|    |                +-----+-----+ |          |                +-----+-----+ |     |
+|    | Monitoring Agent 2           |          | Monitoring Agent 3           |     |
+|    +----------------------|-------+          +----------------------^-------+     |
+|                           |                                         |             |
+|                           +-------------- Replicating --------------+             |
+|                                                                                   |
++-----------------------------------------------------------------------------------+
+
+## Description & Workflow
+
+1. The user sends an HTTPS request to `www.foobar.com` on port 443.
+2. The request passes through **Firewall 1**, which filters unauthorized traffic and allows inbound traffic on port 443.
+3. The request reaches the **HAProxy Load Balancer**, which holds the **SSL Certificate** and terminates SSL/TLS decryption.
+4. HAProxy forwards the decrypted HTTP request to either **Server 1** or **Server 2** via the Round-Robin algorithm over port 80.
+5. Inbound traffic passes through **Firewall 2** or **Firewall 3** on the respective backend server.
+6. **Nginx**, the **Application Server**, and **MySQL** handle the dynamic web traffic, application execution, and database queries.
+7. **3 Monitoring Clients** running locally on each machine collect metric logs, system performance data, and daemon status, transmitting them securely to a central monitoring platform (e.g., Sumo Logic).
+
+## Why Additional Elements Were Added
+
+* **3 Firewalls:** Added to enforce network security policy, restricting incoming and outgoing traffic to essential ports only, protecting backend components from unauthorized access.
+* **1 SSL Certificate:** Added to enable HTTPS encryption for web communications, preventing eavesdropping and tampering.
+* **3 Monitoring Clients:** Added to monitor system resources (CPU, RAM, disk I/O) and service availability in real time across all three servers.
+
+## Infrastructure Specifics
+
+### Security & Protection
+* **Role of Firewalls:** Act as packet filters that inspect network traffic based on security rules. They block unwanted, malicious, or unauthorized traffic while permitting required protocol traffic (e.g., Port 443 for HTTPS, SSH on custom ports).
+* **HTTPS Traffic:** Traffic is served over HTTPS to ensure data privacy, integrity, and authenticity using SSL/TLS encryption. It protects sensitive user transactions (passwords, payment details) against Man-In-The-Middle (MITM) attacks.
+
+### Monitoring System
+* **Role of Monitoring:** Tracks system health, performance metrics, and service status. It provides automated alerting for downtime, detects anomalous traffic patterns, and assists in capacity planning.
+* **Data Collection Method:** Local monitoring agents running on each machine poll system parameters (CPU, memory, disk usage, active connections) and parse application log files (Nginx access logs, MySQL slow query logs). The agent aggregates this data and pushes it asynchronously via API calls to a central monitoring service.
+* **Monitoring Web Server QPS (Queries Per Second):** To monitor QPS, configure the web server (Nginx) to log all incoming requests or enable its status module (`stub_status`). The local monitoring agent reads the status endpoint or parses the access logs in real time, counts HTTP requests per second, and charts the metric on a dashboard with alerts set for traffic spikes.
+
+## Infrastructure Issues & Limitations
+
+1. **SSL Termination at Load Balancer:**
+   Decryption occurs at HAProxy, meaning traffic between the Load Balancer and the backend Application Servers travels over the internal network in plain unencrypted HTTP (Port 80). If an attacker breaches the internal network, they can sniff unencrypted traffic between nodes.
+2. **Single MySQL Server Accepting Writes:**
+   The Primary-Replica MySQL configuration allows writes on only one node (Primary). If the Primary MySQL server crashes, write operations fail across the entire system until manual failover occurs.
+3. **Monolithic Server Component Setup (Co-location):**
+   Running the Web Server, Application Server, and Database together on every backend server leads to resource contention (CPU/RAM/Disk contention). High database load directly degrades web server responsiveness and makes independent horizontal scaling impossible.
+
