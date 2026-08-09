@@ -1,0 +1,61 @@
+# 0. Simple Web Stack
+
+## Diagram
+
++-----------------------------------------------------------------------+
+|                                                                       |
+|                          [ User's Browser ]                           |
+|                                  |                                    |
+|                                  | HTTP Request (Port 80/443)         |
+|                                  v                                    |
+|                   +------------------------------+                    |
+|                   |          DNS Server          |                    |
+|                   |  www.foobar.com -> 8.8.8.8   |                    |
+|                   +--------------+---------------+                    |
+|                                  |                                    |
+|                                  v                                    |
+|                   +------------------------------+                    |
+|                   |    Server (IP: 8.8.8.8)       |                    |
+|                   |                              |                    |
+|                   |  +------------------------+  |                    |
+|                   |  | Web Server (Nginx)     |  |                    |
+|                   |  +-----------+------------+  |                    |
+|                   |              |               |                    |
+|                   |              v               |                    |
+|                   |  +------------------------+  |                    |
+|                   |  | Application Server     |  |                    |
+|                   |  +----+--------------+----+  |                    |
+|                   |       |              |       |                    |
+|                   |       v              v       |                    |
+|                   |  +----------+  +----------+  |                    |
+|                   |  | App Code |  | MySQL DB |  |                    |
+|                   |  +----------+  +----------+  |                    |
+|                   +------------------------------+                    |
++-----------------------------------------------------------------------+
+
+## Description & Workflow
+
+1. The user types `www.foobar.com` in their web browser.
+2. The browser performs a DNS lookup. The DNS record resolves `www.foobar.com` to the server IP address `8.8.8.8`.
+3. The browser sends an HTTP/HTTPS request to server `8.8.8.8`.
+4. The **Nginx Web Server** receives the request. It handles static assets directly and proxies dynamic requests to the **Application Server**.
+5. The **Application Server** executes the application code (codebase) to process the business logic.
+6. If data persistence is needed, the Application Server queries the **MySQL Database**.
+7. The Database returns data to the Application Server, which generates the dynamic response and sends it back to Nginx.
+8. Nginx returns the HTTP response to the user's browser over TCP/IP protocol.
+
+## Infrastructure Details
+
+* **Server:** A physical or virtual hardware instance providing computational resources (CPU, RAM, storage) running an operating system to serve applications.
+* **Domain Name Role:** A human-readable identifier (e.g., `foobar.com`) used to access servers without remembering numerical IP addresses.
+* **DNS Record Type:** An **A record** (mapping `www.foobar.com` directly to `8.8.8.8`) or a **CNAME record** (pointing `www.foobar.com` to `foobar.com`).
+* **Web Server (Nginx) Role:** Handles incoming HTTP/HTTPS connections, manages static files, handles SSL/TLS, and acts as a reverse proxy for the application server.
+* **Application Server Role:** Executes dynamic business logic, executes source code, and communicates with the database.
+* **Database (MySQL) Role:** Stores and manages persistent, structured dynamic data for the application.
+* **Communication Protocol:** The server communicates with the client via **TCP/IP** using **HTTP (Port 80)** or **HTTPS (Port 443)**.
+
+## Issues & Limitations with this Infrastructure
+
+1. **Single Point of Failure (SPOF):** All services (Nginx, App Server, Database) run on one machine. If the server fails or goes offline, the entire website is down.
+2. **Downtime During Maintenance:** Restarting services for code deployments, package updates, or server reboots causes immediate website downtime.
+3. **Scalability Limitations:** A single server cannot scale horizontally. Heavy traffic spikes will overload CPU, RAM, or disk resources, leading to slow responses or server crashes.
