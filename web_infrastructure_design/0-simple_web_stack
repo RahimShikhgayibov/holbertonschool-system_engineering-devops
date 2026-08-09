@@ -59,3 +59,4 @@
 1. **Single Point of Failure (SPOF):** All services (Nginx, App Server, Database) run on one machine. If the server fails or goes offline, the entire website is down.
 2. **Downtime During Maintenance:** Restarting services for code deployments, package updates, or server reboots causes immediate website downtime.
 3. **Scalability Limitations:** A single server cannot scale horizontally. Heavy traffic spikes will overload CPU, RAM, or disk resources, leading to slow responses or server crashes.
+
