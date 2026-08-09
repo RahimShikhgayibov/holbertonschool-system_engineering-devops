@@ -1,0 +1,95 @@
+# 1. Distributed Web Infrastructure
+
+## Diagram
+
++-----------------------------------------------------------------------------------+
+|                                                                                   |
+|                                [ User's Browser ]                                 |
+|                                        |                                          |
+|                                        | HTTP Request (Port 80)                   |
+|                                        v                                          |
+|                         +------------------------------+                          |
+|                         |          DNS Server          |                          |
+|                         |  www.foobar.com -> 8.8.8.8   |                          |
+|                         +--------------+---------------+                          |
+|                                        |                                          |
+|                                        v                                          |
+|                         +------------------------------+                          |
+|                         |  Load Balancer (HAProxy)     |                          |
+|                         |        IP: 8.8.8.8           |                          |
+|                         +--------------+---------------+                          |
+|                                        |                                          |
+|                   +--------------------+--------------------+                     |
+|                   | Round-Robin                             | Round-Robin         |
+|                   v                                         v                     |
+|    +------------------------------+          +------------------------------+     |
+|    | Server 1 (Web / App / DB)    |          | Server 2 (Web / App / DB)    |     |
+|    | IP: 10.0.0.1                 |          | IP: 10.0.0.2                 |     |
+|    |                              |          |                              |     |
+|    | +--------------------------+ |          | +--------------------------+ |     |
+|    | | Web Server (Nginx)       | |          | | Web Server (Nginx)       | |     |
+|    | +------------+-------------+ |          | +------------+-------------+ |     |
+|    |              |               |          |              |               |     |
+|    |              v               |          |              v               |     |
+|    | +--------------------------+ |          | +--------------------------+ |     |
+|    | | Application Server       | |          | | Application Server       | |     |
+|    | +----+-----------------+---+ |          | +----+-----------------+---+ |     |
+|    |      |                 |     |          |      |                 |     |     |
+|    |      v                 v     |          |      v                 v     |     |
+|    | +----------+   +-----------+ |          | +----------+   +-----------+ |     |
+|    | | App Code |   | Primary DB| |          | | App Code |   | Replica DB| |     |
+|    | +----------+   | (MySQL)   | |          | +----------+   | (MySQL)   | |     |
+|    |                +-----+-----+ |          |                +-----+-----+ |     |
+|    +----------------------|-------+          +----------------------^-------+     |
+|                           |                                         |             |
+|                           +-------------- Replicating --------------+             |
+|                                                                                   |
++-----------------------------------------------------------------------------------+
+
+## Description & Workflow
+
+1. The user requests `www.foobar.com` in their web browser.
+2. The DNS server resolves `www.foobar.com` to the Load Balancer IP address (`8.8.8.8`).
+3. The HTTP request reaches the **HAProxy Load Balancer**.
+4. HAProxy distributes incoming HTTP requests across **Server 1** (`10.0.0.1`) and **Server 2** (`10.0.0.2`) using the **Round-Robin** load-balancing algorithm.
+5. The **Nginx Web Server** on the selected server receives the request, serves static content, and proxies dynamic requests to the **Application Server**.
+6. The **Application Server** executes the application code.
+   * **Write operations** (INSERT, UPDATE, DELETE) are sent strictly to the **Primary Database** on Server 1.
+   * **Read operations** (SELECT) are handled by the **Replica Database** on Server 2 (or Primary).
+7. The Replica Database asynchronously synchronizes data changes from the Primary Database.
+8. The server formats the HTTP response and hands it back to HAProxy, which returns it to the client.
+
+## Why Additional Components Were Added
+
+* **1 Load Balancer (HAProxy):** Added to distribute incoming web traffic across multiple application servers, improving infrastructure availability, capacity, and performance.
+* **1 Additional Server (Server 2):** Added to allow horizontal scaling and redundancy. Traffic is split between two servers so one server can handle web traffic while the other is undergoing maintenance.
+* **Primary-Replica Database Cluster:** Separates database reads and writes across two database instances, reducing load on the write server and providing data redundancy.
+
+## Infrastructure Specifics
+
+### Load Balancer Algorithm & Setup
+* **Algorithm:** **Round-Robin**. HAProxy directs incoming requests sequentially across the pool of backend servers (e.g., Request 1 -> Server 1, Request 2 -> Server 2, Request 3 -> Server 1).
+* **Setup Mode:** **Active-Passive (or Active-Active depending on perspective)**:
+  * **Load Balancer:** Active-Passive if using a floating Virtual IP (VIP) with a backup load balancer, though in this basic 3-server setup, HAProxy is a single Active node.
+  * **Web/App Servers:** **Active-Active** setup because both Server 1 and Server 2 actively process incoming user web requests simultaneously.
+  * **Difference:**
+    * *Active-Active:* All servers actively process traffic in parallel, maximizing throughput and balancing load.
+    * *Active-Passive:* One primary server handles all traffic while a standby server remains passive, taking over only if the primary fails.
+
+### Primary-Replica (Master-Slave) Database Cluster
+* **How it works:** Data modification happens on one designated Primary node. The Primary records these changes into a binary log (binlog). The Replica node reads the binary log and executes the same SQL operations locally to mirror the Primary state.
+* **Primary Node vs. Replica Node:**
+  * **Primary (Master):** Executes all **write operations** (INSERT, UPDATE, DELETE) and handles reads. It is the single source of truth for dynamic application updates.
+  * **Replica (Slave):** Handles **read-only operations** (SELECT). It reduces CPU/IO load on the Primary server and serves as a database backup.
+
+## Infrastructure Issues & Limitations
+
+1. **Single Points of Failure (SPOF):**
+   * **Load Balancer:** If the HAProxy server goes down, the entire infrastructure becomes unreachable despite having two healthy application servers.
+   * **Primary Database:** If the Primary MySQL server fails, the web application cannot process any write operations or user registrations.
+2. **Security Vulnerabilities:**
+   * **No Firewall:** No network security rules (e.g., UFW/iptables) are configured to block unauthorized traffic or protect database ports from public access.
+   * **No HTTPS (SSL/TLS):** Traffic between the client and HAProxy travels in unencrypted plain text (HTTP over Port 80), leaving credentials and sensitive data vulnerable to eavesdropping (man-in-the-middle attacks).
+3. **Lack of Monitoring:**
+   * There are no monitoring tools (e.g., Prometheus, Datadog, Nagios) or log aggregation platforms to track system resource health (CPU, RAM, disk space) or alert engineers when a server service crashes.
+
